@@ -39,15 +39,18 @@ button:disabled { color: #999; cursor: not-allowed !important; background: #efef
 .auth-screen { position: relative; width: 100%; height: 100dvh; min-height: 0; padding: 14px 12px; color: #191919; background: #fff; overflow: auto; }
 .auth-layout { width: 100%; height: 100%; min-height: 620px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .auth-visual { position: relative; min-width: 0; min-height: 0; overflow: hidden; border-radius: 24px; background: #191918; isolation: isolate; }
-.auth-visual-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.auth-visual-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; animation: auth-photo-in 480ms ease both; }
 .auth-visual-signup .auth-visual-photo { object-position: center 47%; }
 .auth-visual-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgb(25 25 25 / 30%) 0%, transparent 29%, transparent 48%, rgb(25 25 25 / 7%) 61%, rgb(25 25 25 / 74%) 100%); }
 .auth-visual-logo { position: absolute; top: 65px; left: 58px; width: 226px; height: 42px; object-fit: contain; object-position: left center; }
 .auth-visual-caption { position: absolute; right: 58px; bottom: 69px; left: 58px; display: flex; flex-direction: column; align-items: flex-start; gap: 40px; color: #fff; }
 .auth-visual-caption h2 { max-width: 550px; margin: 0; font: 600 clamp(30px, 3.34vw, 48px)/1 Geist, 'DM Sans', sans-serif; letter-spacing: -.03em; overflow-wrap: break-word; }
-.auth-slide-dots { height: 31px; min-width: 90px; padding: 0 7px; display: flex; align-items: center; gap: 7px; border: 1px solid rgb(255 255 255 / 45%); border-radius: 18px; background: rgb(255 255 255 / 15%); }
-.auth-slide-dots i { width: 12px; height: 12px; border-radius: 50%; background: rgb(255 255 255 / 46%); }
-.auth-slide-dots i.active { background: #fff; }
+.auth-slide-dots { height: 31px; min-width: 0; padding: 0 8px; display: flex; align-items: center; gap: 7px; border: 1px solid rgb(255 255 255 / 45%); border-radius: 18px; background: rgb(255 255 255 / 15%); }
+.auth-slide-dots button { width: 10px; height: 10px; flex: none; padding: 0; border: 0; border-radius: 50%; background: rgb(255 255 255 / 46%); cursor: pointer; transition: background 160ms ease, transform 160ms ease; }
+.auth-slide-dots button.active { background: #fff; transform: scale(1.08); }
+.auth-slide-dots button:hover { background: rgb(255 255 255 / 78%); }
+.auth-slide-dots button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@keyframes auth-photo-in { from { opacity: .7; transform: scale(1.015); } to { opacity: 1; transform: scale(1); } }
 .auth-form-panel { width: 100%; min-width: 0; min-height: 0; display: grid; place-items: center; padding: 32px 0; }
 .auth-form-content { width: min(567px, calc(100% - 64px)); min-width: 0; max-width: 100%; display: grid; gap: 56px; font-family: Geist, 'DM Sans', sans-serif; }
 .auth-heading { display: grid; gap: 18px; }

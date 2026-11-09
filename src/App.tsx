@@ -19,6 +19,14 @@ import { supabase, supabaseConfigured } from './lib/supabase';
 import type { Artboard, DesignObject, DesignProject } from './types';
 
 const STORAGE_KEY = 'duocreator.projects.v1';
+const AUTH_HERO_IMAGES = [
+  '/brand-imagery/duocreator-soft-grade-01.webp',
+  '/brand-imagery/duocreator-soft-grade-02.webp',
+  '/brand-imagery/duocreator-soft-grade-03.webp',
+  '/brand-imagery/duocreator-soft-grade-04.webp',
+  '/brand-imagery/duocreator-soft-grade-05.webp',
+  '/brand-imagery/duocreator-soft-grade-06.webp',
+];
 
 function demoProject(): DesignProject {
   const master: Artboard = {
@@ -82,6 +90,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [authHeroSlide, setAuthHeroSlide] = useState(0);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authPasswordVisible, setAuthPasswordVisible] = useState(false);
@@ -107,6 +116,14 @@ export default function App() {
     const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (favicon) favicon.href = theme === 'dark' ? '/duocreator-icon-on-dark.png' : '/duocreator-icon-on-light.png';
   }, [theme]);
+
+  useEffect(() => {
+    if (!supabaseConfigured || !authReady || session) return;
+    const timer = window.setInterval(() => {
+      setAuthHeroSlide((slide) => (slide + 1) % AUTH_HERO_IMAGES.length);
+    }, 6500);
+    return () => window.clearInterval(timer);
+  }, [authReady, session?.user.id]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -372,6 +389,14 @@ export default function App() {
     }
   };
 
+  const switchAuthMode = () => {
+    const nextMode = authMode === 'sign-in' ? 'sign-up' : 'sign-in';
+    setAuthMode(nextMode);
+    setAuthHeroSlide(nextMode === 'sign-in' ? 0 : 2);
+    setAuthMessage('');
+    setAuthPasswordVisible(false);
+  };
+
   const signOut = async () => {
     if (!supabase) return;
     const { error } = await supabase.auth.signOut();
@@ -388,12 +413,14 @@ export default function App() {
   if (supabaseConfigured && authReady && !session) return <main className={`auth-screen auth-screen-${authMode}`}>
     <div className="auth-layout">
       <section className={`auth-visual ${authMode === 'sign-in' ? 'auth-visual-signin' : 'auth-visual-signup'}`} aria-label="Duocreator introduction">
-        <img className="auth-visual-photo" src={authMode === 'sign-in' ? '/brand-imagery/duocreator-soft-grade-01.webp' : '/brand-imagery/duocreator-soft-grade-03.webp'} alt="" />
+        <img key={AUTH_HERO_IMAGES[authHeroSlide]} className="auth-visual-photo" src={AUTH_HERO_IMAGES[authHeroSlide]} alt="" />
         <div className="auth-visual-shade" />
         <img className="auth-visual-logo" src="/duocreator-full-logo-on-dark.png" alt="Duocreator" />
         <div className="auth-visual-caption">
           <h2>{authMode === 'sign-in' ? 'Sit back and watch your Duo handle the rest.' : 'Enjoy the fun of creating and leave the boring part to your Duo.'}</h2>
-          <div className="auth-slide-dots" aria-hidden="true"><i className="active"/><i/><i/><i/></div>
+          <div className="auth-slide-dots" role="group" aria-label="Choose a workspace photo">
+            {AUTH_HERO_IMAGES.map((photo, index) => <button key={photo} type="button" className={index === authHeroSlide ? 'active' : ''} aria-label={`Show photo ${index + 1} of ${AUTH_HERO_IMAGES.length}`} aria-pressed={index === authHeroSlide} onClick={() => setAuthHeroSlide(index)} />)}
+          </div>
         </div>
       </section>
       <section className="auth-form-panel" aria-labelledby="auth-title">
@@ -419,7 +446,7 @@ export default function App() {
               {authMessage && <p className="auth-message" role="status" aria-live="polite">{authMessage}</p>}
               <div className="auth-primary-actions">
                 <button className="auth-submit" type="submit" disabled={authBusy}>{authBusy ? 'Please wait…' : authMode === 'sign-in' ? 'Sign in' : 'Sign Up'}</button>
-                <p className="auth-switch">{authMode === 'sign-in' ? 'Don’t have an account?' : 'Already have an account?'} <button type="button" onClick={() => { setAuthMode((mode) => mode === 'sign-in' ? 'sign-up' : 'sign-in'); setAuthMessage(''); setAuthPasswordVisible(false); }}>{authMode === 'sign-in' ? 'Create an account.' : 'Log in.'}</button></p>
+                <p className="auth-switch">{authMode === 'sign-in' ? 'Don’t have an account?' : 'Already have an account?'} <button type="button" onClick={switchAuthMode}>{authMode === 'sign-in' ? 'Create an account.' : 'Log in.'}</button></p>
               </div>
               {authMode === 'sign-up' && <>
                 <div className="auth-divider"><span>Or</span></div>
