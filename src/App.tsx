@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { Canvas } from 'fabric';
 import {
   ArrowDownToLine, ArrowLeftRight, Check, ChevronDown, ChevronRight, ClipboardPaste, Cloud, Command, Copy,
-  Crop, FileImage, FileJson2, FileText, FolderOpen, Frame, Grid2X2, ImagePlus, Layers3, LockKeyhole, Moon, Sun,
+  Crop, Eye, EyeOff, FileImage, FileJson2, FileText, FolderOpen, Frame, Grid2X2, ImagePlus, Layers3, LockKeyhole, LogOut, Moon, Sun,
   Plus, Search, Settings2, Shapes, Sparkles, Type, Undo2, Redo2, Upload, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { EditorCanvas } from './components/EditorCanvas';
@@ -12,22 +14,24 @@ import { figmaPayloadToArtboard, formatBytes, parseFigmaClipboard } from './lib/
 import { importImage, importPdf, importSvg } from './lib/imports';
 import { exportArtboard } from './lib/exports';
 import { findLayoutIssues, resizeArtboard } from './lib/resize';
+import { loadLatestProject, saveProject } from './lib/projectStore';
+import { supabase, supabaseConfigured } from './lib/supabase';
 import type { Artboard, DesignObject, DesignProject } from './types';
 
 const STORAGE_KEY = 'duocreator.projects.v1';
 
 function demoProject(): DesignProject {
   const master: Artboard = {
-    id: 'master', name: 'Instagram post', width: 1080, height: 1080, category: 'Social', isMaster: true, source: 'native',
+    id: 'master', name: 'Instagram post', width: 1080, height: 1350, category: 'Social', isMaster: true, source: 'native',
     objects: [
-      { id: 'bg', name: 'Soft paper background', type: 'rect', x: 0, y: 0, width: 1080, height: 1080, fill: '#eff0e8', locked: true },
-      { id: 'orb', name: 'Tangerine form', type: 'ellipse', x: 680, y: 90, width: 300, height: 300, fill: '#de7855' },
-      { id: 'label', name: 'Series label', type: 'text', x: 82, y: 74, width: 460, height: 50, fill: '#343a32', text: 'DUOCREATOR STUDIO  /  FIELD NOTES', fontFamily: 'Inter', fontSize: 22, fontWeight: '600' },
-      { id: 'headline', name: 'Campaign headline', type: 'text', x: 80, y: 294, width: 790, height: 345, fill: '#191919', text: 'Good things\ntake shape.', fontFamily: 'Georgia', fontSize: 118, fontWeight: '700' },
-      { id: 'stamp', name: 'Edition stamp pill', type: 'rect', x: 80, y: 794, width: 235, height: 136, fill: '#191919' },
-      { id: 'stamp-text', name: 'Edition details', type: 'text', x: 105, y: 817, width: 190, height: 92, fill: '#ffffff', text: '01 / 06\nResize with intention', fontFamily: 'Inter', fontSize: 20, fontWeight: '500' },
-      { id: 'line', name: 'Footer rule', type: 'line', x: 360, y: 861, width: 530, height: 0, fill: '#343a32', stroke: '#343a32', strokeWidth: 2 },
-      { id: 'footer', name: 'Footer text', type: 'text', x: 360, y: 884, width: 510, height: 40, fill: '#343a32', text: 'ONE IDEA. EVERY FORMAT.', fontFamily: 'Inter', fontSize: 18, fontWeight: '600' },
+      { id: 'bg', name: 'Soft paper background', type: 'rect', x: 0, y: 0, width: 1080, height: 1350, fill: '#eff0e8', locked: true },
+      { id: 'orb', name: 'Tangerine form', type: 'ellipse', x: 700, y: 135, width: 300, height: 300, fill: '#de7855' },
+      { id: 'label', name: 'Series label', type: 'text', x: 82, y: 82, width: 460, height: 50, fill: '#343a32', text: 'DUOCREATOR STUDIO  /  FIELD NOTES', fontFamily: 'Inter', fontSize: 22, fontWeight: '600' },
+      { id: 'headline', name: 'Campaign headline', type: 'text', x: 80, y: 355, width: 790, height: 345, fill: '#191919', text: 'Good things\ntake shape.', fontFamily: 'Georgia', fontSize: 118, fontWeight: '700' },
+      { id: 'stamp', name: 'Edition stamp pill', type: 'rect', x: 80, y: 1065, width: 235, height: 136, fill: '#191919' },
+      { id: 'stamp-text', name: 'Edition details', type: 'text', x: 105, y: 1088, width: 190, height: 92, fill: '#ffffff', text: '01 / 06\nResize with intention', fontFamily: 'Inter', fontSize: 20, fontWeight: '500' },
+      { id: 'line', name: 'Footer rule', type: 'line', x: 360, y: 1130, width: 530, height: 0, fill: '#343a32', stroke: '#343a32', strokeWidth: 2 },
+      { id: 'footer', name: 'Footer text', type: 'text', x: 360, y: 1153, width: 510, height: 40, fill: '#343a32', text: 'ONE IDEA. EVERY FORMAT.', fontFamily: 'Inter', fontSize: 18, fontWeight: '600' },
     ],
   };
   return { id: 'project-field-notes', name: 'Field Notes — Spring launch', updatedAt: new Date().toISOString(), artboards: [master] };
@@ -36,7 +40,24 @@ function demoProject(): DesignProject {
 function loadProject(): DesignProject {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) as DesignProject : demoProject();
+    if (!stored) return demoProject();
+    const project = JSON.parse(stored) as DesignProject;
+    const sampleMaster = project.artboards.find((board) => board.id === 'master' && board.isMaster);
+    if (project.id === 'project-field-notes' && sampleMaster?.width === 1080 && sampleMaster.height === 1080) {
+      const verticalScale = 1350 / sampleMaster.height;
+      return {
+        ...project,
+        updatedAt: new Date().toISOString(),
+        artboards: project.artboards.map((board) => board.id !== 'master' ? board : {
+          ...board,
+          height: 1350,
+          objects: board.objects.map((object) => object.id === 'bg'
+            ? { ...object, height: 1350 }
+            : { ...object, y: Math.round(object.y * verticalScale) }),
+        }),
+      };
+    }
+    return project;
   } catch { return demoProject(); }
 }
 
@@ -58,6 +79,17 @@ export default function App() {
   const [importing, setImporting] = useState(false);
   const [savedAt, setSavedAt] = useState('Saved');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => localStorage.getItem('duocreator.theme') === 'dark' ? 'dark' : 'light');
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(!supabaseConfigured);
+  const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authPasswordVisible, setAuthPasswordVisible] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMessage, setAuthMessage] = useState('');
+  const [cloudLoaded, setCloudLoaded] = useState(!supabaseConfigured);
+  const [cloudError, setCloudError] = useState('');
+  const [cloudRetry, setCloudRetry] = useState(0);
   const [selectedArtboard, setSelectedArtboard] = useState(false);
   const [past, setPast] = useState<DesignProject[]>([]);
   const [future, setFuture] = useState<DesignProject[]>([]);
@@ -72,14 +104,71 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('duocreator.theme', theme);
+    const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (favicon) favicon.href = theme === 'dark' ? '/duocreator-icon-on-dark.png' : '/duocreator-icon-on-light.png';
   }, [theme]);
 
   useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthReady(true);
+      setAuthMessage('');
+    });
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      setSession(data.session);
+      setAuthReady(true);
+      if (error) setAuthMessage(error.message);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setAuthReady(true);
+      setAuthMessage(error instanceof Error ? error.message : 'Unable to check your sign-in session.');
+    });
+    return () => { active = false; subscription.unsubscribe(); };
+  }, []);
+
+  useEffect(() => {
+    if (!supabaseConfigured) { setCloudLoaded(true); return; }
+    if (!authReady || !session?.user.id) { setCloudLoaded(false); return; }
+    let active = true;
+    setCloudLoaded(false);
+    setCloudError('');
+    void loadLatestProject(session.user.id).then((remoteProject) => {
+      if (!active) return;
+      if (remoteProject) setProject(remoteProject);
+      else setProject(loadProject());
+      setCloudLoaded(true);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      setCloudError(error instanceof Error ? error.message : 'Could not load your saved designs.');
+    });
+    return () => { active = false; };
+  }, [authReady, session?.user.id, cloudRetry]);
+
+  useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
-    setSavedAt('Saved just now');
-    const timer = window.setTimeout(() => setSavedAt('Saved'), 1500);
+    if (!supabaseConfigured) {
+      setSavedAt('Saved locally');
+      return;
+    }
+    if (!authReady) { setSavedAt('Connecting…'); return; }
+    if (!session) { setSavedAt('Sign in to sync'); return; }
+    if (!cloudLoaded) { setSavedAt(cloudError ? 'Cloud unavailable' : 'Loading cloud…'); return; }
+
+    setSavedAt('Saving…');
+    const timer = window.setTimeout(() => {
+      void saveProject(session.user.id, project).then(() => {
+        setSavedAt('Saved');
+        setCloudError('');
+      }).catch((error: unknown) => {
+        setSavedAt('Local copy · sync failed');
+        setCloudError(error instanceof Error ? error.message : 'Could not save this design to Supabase.');
+      });
+    }, 650);
     return () => window.clearTimeout(timer);
-  }, [project]);
+  }, [project, authReady, session?.user.id, cloudLoaded]);
 
   useEffect(() => {
     if (!toast) return;
@@ -242,14 +331,121 @@ export default function App() {
     } catch (error) { setToast(error instanceof Error ? error.message : 'Export failed.'); }
   };
 
+  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase) return;
+    setAuthBusy(true);
+    setAuthMessage('');
+    try {
+      if (authMode === 'sign-in') {
+        const { error } = await supabase.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword });
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase.auth.signUp({
+          email: authEmail.trim(),
+          password: authPassword,
+          options: { emailRedirectTo: window.location.origin },
+        });
+        if (error) throw error;
+        if (!data.session) setAuthMessage('Check your email to confirm your account, then sign in to sync your designs.');
+      }
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : 'Authentication failed. Please try again.');
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const signInWithGoogle = async () => {
+    if (!supabase) return;
+    setAuthBusy(true);
+    setAuthMessage('');
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin },
+      });
+      if (error) throw error;
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : 'Google sign-in failed. Please try again.');
+      setAuthBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    if (!supabase) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) setToast(`Could not sign out: ${error.message}`);
+  };
+
   const handleDrop = (event: React.DragEvent) => { event.preventDefault(); void processFiles(event.dataTransfer.files); };
   const objectCount = active?.objects.length ?? 0;
 
+  const fullLogo = theme === 'dark' ? '/duocreator-full-logo-on-dark.png' : '/duocreator-full-logo-on-light.png';
+
+  if (supabaseConfigured && !authReady) return <main className="auth-screen auth-status-screen"><div className="auth-card auth-status"><img src={fullLogo} alt="Duocreator"/><p>Connecting to your workspace…</p></div></main>;
+
+  if (supabaseConfigured && authReady && !session) return <main className={`auth-screen auth-screen-${authMode}`}>
+    <div className="auth-layout">
+      <section className={`auth-visual ${authMode === 'sign-in' ? 'auth-visual-signin' : 'auth-visual-signup'}`} aria-label="Duocreator introduction">
+        <img className="auth-visual-photo" src={authMode === 'sign-in' ? '/brand-imagery/duocreator-soft-grade-01.webp' : '/brand-imagery/duocreator-soft-grade-03.webp'} alt="" />
+        <div className="auth-visual-shade" />
+        <img className="auth-visual-logo" src="/duocreator-full-logo-on-dark.png" alt="Duocreator" />
+        <div className="auth-visual-caption">
+          <h2>{authMode === 'sign-in' ? 'Sit back and watch your Duo handle the rest.' : 'Enjoy the fun of creating and leave the boring part to your Duo.'}</h2>
+          <div className="auth-slide-dots" aria-hidden="true"><i className="active"/><i/><i/><i/></div>
+        </div>
+      </section>
+      <section className="auth-form-panel" aria-labelledby="auth-title">
+        <div className="auth-form-content">
+          <header className="auth-heading">
+            <h1 id="auth-title">{authMode === 'sign-in' ? 'Hey! Welcome back🎉' : 'Create an account👌'}</h1>
+            <p>{authMode === 'sign-in' ? 'Sign in to open your saved projects and keep your work in sync everywhere.' : 'Sign up to create projects, generate editable varying canvas and keep your work in sync everywhere.'}</p>
+          </header>
+          <form id="duocreator-auth-form" className="auth-form" onSubmit={(event) => void submitAuth(event)}>
+            <div className="auth-fields">
+              <label className="auth-field">Email address
+                <input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="Enter your email address" />
+              </label>
+              <label className="auth-field">Password
+                <span className="auth-password-wrap">
+                  <input type={authPasswordVisible ? 'text' : 'password'} autoComplete={authMode === 'sign-in' ? 'current-password' : 'new-password'} minLength={8} maxLength={14} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Input your password" />
+                  <button type="button" className="auth-password-toggle" onClick={() => setAuthPasswordVisible((visible) => !visible)} aria-label={authPasswordVisible ? 'Hide password' : 'Show password'} aria-pressed={authPasswordVisible}>{authPasswordVisible ? <Eye size={20}/> : <EyeOff size={20}/>}</button>
+                </span>
+                <small className="auth-password-hint"><strong>Input at least 8 characters, no more than 14 characters.</strong> Uppercase letters, lowercase letters, numbers and symbols are allowed.</small>
+              </label>
+            </div>
+            <div className="auth-actions">
+              {authMessage && <p className="auth-message" role="status" aria-live="polite">{authMessage}</p>}
+              <div className="auth-primary-actions">
+                <button className="auth-submit" type="submit" disabled={authBusy}>{authBusy ? 'Please wait…' : authMode === 'sign-in' ? 'Sign in' : 'Sign Up'}</button>
+                <p className="auth-switch">{authMode === 'sign-in' ? 'Don’t have an account?' : 'Already have an account?'} <button type="button" onClick={() => { setAuthMode((mode) => mode === 'sign-in' ? 'sign-up' : 'sign-in'); setAuthMessage(''); setAuthPasswordVisible(false); }}>{authMode === 'sign-in' ? 'Create an account.' : 'Log in.'}</button></p>
+              </div>
+              {authMode === 'sign-up' && <>
+                <div className="auth-divider"><span>Or</span></div>
+                <button className="auth-google" type="button" onClick={() => void signInWithGoogle()} disabled={authBusy}><img src="/google-mark.png" alt="" />Sign Up with Google</button>
+              </>}
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
+    <button className="auth-theme-toggle" type="button" title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} aria-pressed={theme === 'dark'} onClick={() => setTheme((current) => current === 'light' ? 'dark' : 'light')}>
+      {theme === 'light' ? <Moon size={16}/> : <Sun size={16}/>}
+    </button>
+  </main>;
+
+  if (supabaseConfigured && session && !cloudLoaded) return <main className="auth-screen auth-status-screen"><div className="auth-card auth-status">
+    <img src={fullLogo} alt="Duocreator"/>
+    {cloudError ? <><p>We couldn’t load your saved workspace.</p><small>{cloudError}</small><button className="auth-submit" onClick={() => setCloudRetry((retry) => retry + 1)}>Retry connection</button><button className="auth-switch" onClick={() => void signOut()}>Sign out</button></> : <p>Loading your saved designs…</p>}
+  </div></main>;
+
   return <div className="app-shell" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
     <header className="topbar">
-      <div className="brand-lockup"><img src="/duocreator-full-logo.png" alt="Duocreator"/><span className="studio-tag">Studio</span></div>
+      <div className="brand-lockup"><img src={fullLogo} alt="Duocreator"/><span className="studio-tag">Studio</span></div>
       <div className="project-name"><span className="project-dot"/> <span>{project.name}</span><span className="save-state"><Check size={12}/>{savedAt}</span></div>
       <div className="top-actions">
+        {supabaseConfigured && session && <button className="top-icon" type="button" title={`Sign out ${session.user.email ?? 'account'}`} aria-label="Sign out" onClick={() => void signOut()}><LogOut size={15}/></button>}
         <button className="top-icon theme-toggle" type="button" title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} aria-pressed={theme === 'dark'} onClick={() => setTheme((current) => current === 'light' ? 'dark' : 'light')}>
           {theme === 'light' ? <Moon size={15}/> : <Sun size={15}/>}<span>{theme === 'light' ? 'Light' : 'Dark'}</span>
         </button>
@@ -281,7 +477,7 @@ export default function App() {
           <button className="tool-row muted-row" onClick={() => setCanvaMessage(true)}><Cloud size={15}/><span>Connect Canva</span><span className="pending-dot">Soon</span></button>
           {canvaMessage && <div className="canva-note">Canva import will be added after API access is confirmed.</div>}
         </div>
-        <div className="sidebar-bottom"><span className="user-avatar"><img src="/duocreator-icon.png" alt=""/></span><span><strong>Dara’s workspace</strong><small>Personal studio</small></span><Settings2 size={15}/></div>
+        <div className="sidebar-bottom"><span className="user-avatar"><img src="/duocreator-icon-on-dark.png" alt=""/></span><span><strong>Dara’s workspace</strong><small>Personal studio</small></span><Settings2 size={15}/></div>
       </aside>
 
       <main className="editor-area">
