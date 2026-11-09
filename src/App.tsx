@@ -89,13 +89,15 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(() => localStorage.getItem('duocreator.theme') === 'dark' ? 'dark' : 'light');
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
-  const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up' | 'forgot-password' | 'reset-sent' | 'reset-password' | 'reset-complete'>('sign-in');
   const [authHeroSlide, setAuthHeroSlide] = useState(0);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState('');
   const [authPasswordVisible, setAuthPasswordVisible] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState('');
+  const [authErrors, setAuthErrors] = useState<Record<string, string>>({});
   const [cloudLoaded, setCloudLoaded] = useState(!supabaseConfigured);
   const [cloudError, setCloudError] = useState('');
   const [cloudRetry, setCloudRetry] = useState(0);
@@ -128,10 +130,11 @@ export default function App() {
   useEffect(() => {
     if (!supabase) return;
     let active = true;
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession);
       setAuthReady(true);
       setAuthMessage('');
+      if (event === 'PASSWORD_RECOVERY') setAuthMode('reset-password');
     });
     void supabase.auth.getSession().then(({ data, error }) => {
       if (!active) return;
@@ -348,13 +351,46 @@ export default function App() {
     } catch (error) { setToast(error instanceof Error ? error.message : 'Export failed.'); }
   };
 
+  const emailError = (email: string) => {
+    if (!email.trim()) return 'This field can’t be empty.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'Enter a valid email address.';
+    return '';
+  };
+
+  const passwordError = (password: string) => {
+    if (!password) return 'This field can’t be empty.';
+    if (password.length < 8 || password.length > 14) return 'Use 8 to 14 characters.';
+    return '';
+  };
+
   const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!supabase) return;
+    const errors: Record<string, string> = {};
+    if (authMode === 'forgot-password' || authMode === 'sign-in' || authMode === 'sign-up') errors.email = emailError(authEmail);
+    if (authMode === 'sign-in' || authMode === 'sign-up' || authMode === 'reset-password') errors.password = passwordError(authPassword);
+    if (authMode === 'reset-password') {
+      if (!authPasswordConfirm) errors.confirmPassword = 'This field can’t be empty.';
+      else if (authPasswordConfirm !== authPassword) errors.confirmPassword = 'Passwords don’t match.';
+    }
+    const activeErrors = Object.fromEntries(Object.entries(errors).filter(([, message]) => message));
+    setAuthErrors(activeErrors);
+    if (Object.keys(activeErrors).length) return;
     setAuthBusy(true);
     setAuthMessage('');
     try {
-      if (authMode === 'sign-in') {
+      if (authMode === 'forgot-password') {
+        const { error } = await supabase.auth.resetPasswordForEmail(authEmail.trim(), { redirectTo: window.location.origin });
+        if (error) throw error;
+        setAuthMode('reset-sent');
+      } else if (authMode === 'reset-password') {
+        const { error } = await supabase.auth.updateUser({ password: authPassword });
+        if (error) throw error;
+        await supabase.auth.signOut();
+        setAuthMode('reset-complete');
+        setAuthPassword('');
+        setAuthPasswordConfirm('');
+      } else if (authMode === 'sign-in') {
         const { error } = await supabase.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword });
         if (error) throw error;
       } else {
@@ -367,7 +403,12 @@ export default function App() {
         if (!data.session) setAuthMessage('Check your email to confirm your account, then sign in to sync your designs.');
       }
     } catch (error) {
-      setAuthMessage(error instanceof Error ? error.message : 'Authentication failed. Please try again.');
+      const message = error instanceof Error ? error.message : 'Authentication failed. Please try again.';
+      if (authMode === 'sign-in' && /invalid login credentials/i.test(message)) {
+        setAuthErrors({ password: 'Email or password is incorrect.' });
+      } else {
+        setAuthMessage(message);
+      }
     } finally {
       setAuthBusy(false);
     }
@@ -390,11 +431,27 @@ export default function App() {
   };
 
   const switchAuthMode = () => {
-    const nextMode = authMode === 'sign-in' ? 'sign-up' : 'sign-in';
+    const nextMode = authMode === 'sign-up' ? 'sign-in' : 'sign-up';
     setAuthMode(nextMode);
     setAuthHeroSlide(nextMode === 'sign-in' ? 0 : 2);
     setAuthMessage('');
+    setAuthErrors({});
     setAuthPasswordVisible(false);
+  };
+
+  const showForgotPassword = () => {
+    setAuthMode('forgot-password');
+    setAuthMessage('');
+    setAuthErrors({});
+  };
+
+  const returnToSignIn = async () => {
+    if (authMode === 'reset-complete' && supabase) await supabase.auth.signOut();
+    setAuthMode('sign-in');
+    setAuthMessage('');
+    setAuthErrors({});
+    setAuthPassword('');
+    setAuthPasswordConfirm('');
   };
 
   const signOut = async () => {
@@ -410,7 +467,7 @@ export default function App() {
 
   if (supabaseConfigured && !authReady) return <main className="auth-screen auth-status-screen"><div className="auth-card auth-status"><img src={fullLogo} alt="Duocreator"/><p>Connecting to your workspace…</p></div></main>;
 
-  if (supabaseConfigured && authReady && !session) return <main className={`auth-screen auth-screen-${authMode}`}>
+  if (supabaseConfigured && authReady && (!session || authMode === 'reset-password' || authMode === 'reset-complete')) return <main className={`auth-screen auth-screen-${authMode}`}>
     <div className="auth-layout">
       <section className={`auth-visual ${authMode === 'sign-in' ? 'auth-visual-signin' : 'auth-visual-signup'}`} aria-label="Duocreator introduction">
         <img key={AUTH_HERO_IMAGES[authHeroSlide]} className="auth-visual-photo" src={AUTH_HERO_IMAGES[authHeroSlide]} alt="" />
@@ -426,34 +483,47 @@ export default function App() {
       <section className="auth-form-panel" aria-labelledby="auth-title">
         <div className="auth-form-content">
           <header className="auth-heading">
-            <h1 id="auth-title">{authMode === 'sign-in' ? 'Hey! Welcome back🎉' : 'Create an account👌'}</h1>
-            <p>{authMode === 'sign-in' ? 'Sign in to open your saved projects and keep your work in sync everywhere.' : 'Sign up to create projects, generate editable varying canvas and keep your work in sync everywhere.'}</p>
+            <h1 id="auth-title">{authMode === 'sign-in' ? 'Hey! Welcome back🎉' : authMode === 'sign-up' ? 'Create an account👌' : authMode === 'forgot-password' ? 'Forgot password?' : authMode === 'reset-sent' ? 'Check your email' : authMode === 'reset-password' ? 'Create a new password' : 'Password updated'}</h1>
+            <p>{authMode === 'sign-in' ? 'Sign in to open your saved projects and keep your work in sync everywhere.' : authMode === 'sign-up' ? 'Sign up to create projects, generate editable varying canvas and keep your work in sync everywhere.' : authMode === 'forgot-password' ? 'Enter the email address you used to create your account. We’ll send you a link to reset your password.' : authMode === 'reset-sent' ? `We sent a password reset link to ${authEmail.trim()}. Follow the link in that email to continue.` : authMode === 'reset-password' ? 'Choose a new password for your Duocreator account.' : 'Your password has been changed. You can now sign in with your new password.'}</p>
           </header>
-          <form id="duocreator-auth-form" className="auth-form" onSubmit={(event) => void submitAuth(event)}>
+          {authMode === 'reset-sent' || authMode === 'reset-complete' ? <div className="auth-actions auth-flow-actions">
+            {authMode === 'reset-sent' && <><p className="auth-flow-note">Didn’t receive it? Check your spam folder, or try another email address.</p><button className="auth-text-link" type="button" onClick={() => { setAuthMode('forgot-password'); setAuthMessage(''); }}>Try another email address</button></>}
+            <button className="auth-submit" type="button" onClick={() => void returnToSignIn()}>Back to sign in</button>
+          </div> : <form id="duocreator-auth-form" className="auth-form" onSubmit={(event) => void submitAuth(event)} noValidate>
             <div className="auth-fields">
-              <label className="auth-field">Email address
-                <input type="email" autoComplete="email" required value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="Enter your email address" />
-              </label>
-              <label className="auth-field">Password
-                <span className="auth-password-wrap">
-                  <input type={authPasswordVisible ? 'text' : 'password'} autoComplete={authMode === 'sign-in' ? 'current-password' : 'new-password'} minLength={8} maxLength={14} required value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} placeholder="Input your password" />
+              {(authMode === 'sign-in' || authMode === 'sign-up' || authMode === 'forgot-password') && <label className="auth-field">Email address
+                <input className={authErrors.email ? 'is-error' : ''} type="email" autoComplete="email" value={authEmail} aria-invalid={Boolean(authErrors.email)} aria-describedby={authErrors.email ? 'auth-email-error' : undefined} onBlur={() => setAuthErrors((current) => ({ ...current, email: emailError(authEmail) }))} onChange={(event) => { setAuthEmail(event.target.value); setAuthErrors((current) => ({ ...current, email: '' })); }} placeholder="Enter your email address" />
+                {authErrors.email && <small className="auth-field-error" id="auth-email-error">{authErrors.email}</small>}
+              </label>}
+              {(authMode === 'sign-in' || authMode === 'sign-up' || authMode === 'reset-password') && <label className="auth-field">{authMode === 'reset-password' ? 'New password' : 'Password'}
+                <span className={`auth-password-wrap ${authErrors.password ? 'is-error' : ''}`}>
+                  <input className={authErrors.password ? 'is-error' : ''} type={authPasswordVisible ? 'text' : 'password'} autoComplete={authMode === 'sign-in' ? 'current-password' : 'new-password'} minLength={8} maxLength={14} value={authPassword} aria-invalid={Boolean(authErrors.password)} aria-describedby={authErrors.password ? 'auth-password-error' : 'auth-password-hint'} onBlur={() => setAuthErrors((current) => ({ ...current, password: passwordError(authPassword) }))} onChange={(event) => { setAuthPassword(event.target.value); setAuthErrors((current) => ({ ...current, password: '' })); }} placeholder={authMode === 'reset-password' ? 'Enter your new password' : 'Input your password'} />
                   <button type="button" className="auth-password-toggle" onClick={() => setAuthPasswordVisible((visible) => !visible)} aria-label={authPasswordVisible ? 'Hide password' : 'Show password'} aria-pressed={authPasswordVisible}>{authPasswordVisible ? <Eye size={20}/> : <EyeOff size={20}/>}</button>
                 </span>
-                <small className="auth-password-hint"><strong>Input at least 8 characters, no more than 14 characters.</strong> Uppercase letters, lowercase letters, numbers and symbols are allowed.</small>
-              </label>
+                {authErrors.password ? <small className="auth-field-error" id="auth-password-error">{authErrors.password}</small> : <small className="auth-password-hint" id="auth-password-hint"><strong>Input at least 8 characters, no more than 14 characters.</strong> Uppercase letters, lowercase letters, numbers and symbols are allowed.</small>}
+              </label>}
+              {authMode === 'reset-password' && <label className="auth-field">Confirm new password
+                <span className={`auth-password-wrap ${authErrors.confirmPassword ? 'is-error' : ''}`}>
+                  <input className={authErrors.confirmPassword ? 'is-error' : ''} type={authPasswordVisible ? 'text' : 'password'} autoComplete="new-password" value={authPasswordConfirm} aria-invalid={Boolean(authErrors.confirmPassword)} aria-describedby={authErrors.confirmPassword ? 'auth-confirm-password-error' : undefined} onBlur={() => setAuthErrors((current) => ({ ...current, confirmPassword: !authPasswordConfirm ? 'This field can’t be empty.' : authPasswordConfirm !== authPassword ? 'Passwords don’t match.' : '' }))} onChange={(event) => { setAuthPasswordConfirm(event.target.value); setAuthErrors((current) => ({ ...current, confirmPassword: '' })); }} placeholder="Confirm your new password" />
+                  <button type="button" className="auth-password-toggle" onClick={() => setAuthPasswordVisible((visible) => !visible)} aria-label={authPasswordVisible ? 'Hide password' : 'Show password'} aria-pressed={authPasswordVisible}>{authPasswordVisible ? <Eye size={20}/> : <EyeOff size={20}/>}</button>
+                </span>
+                {authErrors.confirmPassword && <small className="auth-field-error" id="auth-confirm-password-error">{authErrors.confirmPassword}</small>}
+              </label>}
             </div>
+            {authMode === 'sign-in' && <p className="auth-forgot"><button type="button" onClick={showForgotPassword}>Forgot password?</button></p>}
+            {authMode === 'forgot-password' && <p className="auth-switch"><button type="button" onClick={() => void returnToSignIn()}>Back to sign in</button></p>}
             <div className="auth-actions">
               {authMessage && <p className="auth-message" role="status" aria-live="polite">{authMessage}</p>}
               <div className="auth-primary-actions">
-                <button className="auth-submit" type="submit" disabled={authBusy}>{authBusy ? 'Please wait…' : authMode === 'sign-in' ? 'Sign in' : 'Sign Up'}</button>
-                <p className="auth-switch">{authMode === 'sign-in' ? 'Don’t have an account?' : 'Already have an account?'} <button type="button" onClick={switchAuthMode}>{authMode === 'sign-in' ? 'Create an account.' : 'Log in.'}</button></p>
+                <button className="auth-submit" type="submit" disabled={authBusy}>{authBusy ? 'Please wait…' : authMode === 'sign-in' ? 'Sign in' : authMode === 'sign-up' ? 'Sign Up' : authMode === 'forgot-password' ? 'Send reset link' : 'Update password'}</button>
+                {(authMode === 'sign-in' || authMode === 'sign-up') && <p className="auth-switch">{authMode === 'sign-in' ? 'Don’t have an account?' : 'Already have an account?'} <button type="button" onClick={switchAuthMode}>{authMode === 'sign-in' ? 'Create an account.' : 'Log in.'}</button></p>}
               </div>
               {authMode === 'sign-up' && <>
                 <div className="auth-divider"><span>Or</span></div>
                 <button className="auth-google" type="button" onClick={() => void signInWithGoogle()} disabled={authBusy}><img src="/google-mark.png" alt="" />Sign Up with Google</button>
               </>}
             </div>
-          </form>
+          </form>}
         </div>
       </section>
     </div>
