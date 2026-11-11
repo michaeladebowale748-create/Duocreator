@@ -5,7 +5,7 @@ import { Canvas } from 'fabric';
 import {
   ArrowDownToLine, ArrowLeftRight, Check, ChevronDown, ChevronRight, ClipboardPaste, Cloud, Command, Copy,
   Crop, Eye, EyeOff, FileImage, FileJson2, FileText, FolderOpen, Frame, Grid2X2, ImagePlus, Layers3, LockKeyhole, LogOut, Moon, Sun,
-  Plus, Search, Settings2, Shapes, Sparkles, Type, Undo2, Redo2, Upload, ZoomIn, ZoomOut,
+  ListChecks, Plus, Search, Settings2, Shapes, Sparkles, Trash2, Type, Undo2, Redo2, Upload, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { EditorCanvas } from './components/EditorCanvas';
 import { Inspector } from './components/Inspector';
@@ -102,11 +102,14 @@ export default function App() {
   const [cloudError, setCloudError] = useState('');
   const [cloudRetry, setCloudRetry] = useState(0);
   const [selectedArtboard, setSelectedArtboard] = useState(false);
+  const [multiSelectArtboards, setMultiSelectArtboards] = useState(false);
+  const [artboardDeleteSelection, setArtboardDeleteSelection] = useState<string[]>([]);
   const [past, setPast] = useState<DesignProject[]>([]);
   const [future, setFuture] = useState<DesignProject[]>([]);
   const [, setCanvases] = useState<Record<string, Canvas | null>>({});
   const fileRef = useRef<HTMLInputElement>(null);
   const exportRef = useRef<HTMLDivElement>(null);
+  const canvasStageRef = useRef<HTMLDivElement>(null);
   const active = project.artboards.find((board) => board.id === activeId) ?? project.artboards[0] ?? demoProject().artboards[0];
   const selected = active?.objects.find((object) => object.id === selectedId) ?? null;
   const issues = useMemo(() => active ? findLayoutIssues(active) : [], [active]);
@@ -189,6 +192,21 @@ export default function App() {
     }, 650);
     return () => window.clearTimeout(timer);
   }, [project, authReady, session?.user.id, cloudLoaded]);
+
+  useEffect(() => {
+    const stage = canvasStageRef.current;
+    if (!stage) return;
+    const onWheel = (event: WheelEvent) => {
+      // Chrome reports trackpad pinch as a ctrl+wheel event. Meta+wheel enables
+      // the same gesture on macOS; Ctrl+wheel is also useful on other systems.
+      if (!event.metaKey && !event.ctrlKey) return;
+      event.preventDefault();
+      const factor = Math.exp(-event.deltaY * 0.0015);
+      setZoom((value) => Math.min(2, Math.max(.12, value * factor)));
+    };
+    stage.addEventListener('wheel', onWheel, { passive: false });
+    return () => stage.removeEventListener('wheel', onWheel);
+  }, [session, cloudLoaded]);
 
   useEffect(() => {
     if (!toast) return;
@@ -291,7 +309,9 @@ export default function App() {
     setActiveId(board.id);
     setSelectedId(null);
     setSelectedArtboard(true);
-    setToast(`${preset.name} variant created.`);
+    setArtboardDeleteSelection([]);
+    setMultiSelectArtboards(false);
+    setToast(`${preset.name} composition adapted. Edit any layer to refine it.`);
   };
 
   const createCustomVariant = () => {
@@ -321,6 +341,28 @@ export default function App() {
     setProject((current) => ({ ...current, artboards: current.artboards.map((board) => board.id === active.id ? { ...board, objects: board.objects.filter((object) => object.id !== id) } : board) }));
     setSelectedId(null);
     setSelectedArtboard(true);
+  };
+
+  const deleteArtboards = (ids: string[]) => {
+    const deletableIds = new Set(project.artboards.filter((board) => !board.isMaster && ids.includes(board.id)).map((board) => board.id));
+    if (!deletableIds.size) return;
+    const activeIndex = project.artboards.findIndex((board) => board.id === activeId);
+    const remaining = project.artboards.filter((board) => !deletableIds.has(board.id));
+    saveHistory();
+    setProject((current) => ({ ...current, updatedAt: new Date().toISOString(), artboards: current.artboards.filter((board) => !deletableIds.has(board.id)) }));
+    if (deletableIds.has(activeId)) {
+      const nextActive = remaining[Math.min(Math.max(activeIndex, 0), remaining.length - 1)];
+      setActiveId(nextActive?.id ?? '');
+    }
+    setSelectedId(null);
+    setSelectedArtboard(true);
+    setArtboardDeleteSelection([]);
+    setMultiSelectArtboards(false);
+    setToast(`${deletableIds.size} artboard${deletableIds.size === 1 ? '' : 's'} deleted. Undo is available.`);
+  };
+
+  const toggleArtboardDeleteSelection = (id: string) => {
+    setArtboardDeleteSelection((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   };
 
   const undo = () => {
@@ -559,14 +601,22 @@ export default function App() {
 
     <div className="workspace">
       <aside className="left-panel">
-        <div className="panel-intro"><div><span className="panel-kicker">WORKSPACE</span><strong>Campaigns</strong></div><button className="add-project" title="New project" onClick={() => { const sample = demoProject(); setProject(sample); setActiveId(sample.artboards[0].id); setToast('New project created.'); }}><Plus size={16}/></button></div>
+        <div className="panel-intro"><div><span className="panel-kicker">WORKSPACE</span><strong>Campaigns</strong></div><button className="add-project" title="New project" onClick={() => { const sample = demoProject(); setProject(sample); setActiveId(sample.artboards[0].id); setArtboardDeleteSelection([]); setMultiSelectArtboards(false); setToast('New project created.'); }}><Plus size={16}/></button></div>
         <button className="project-row active"><FolderOpen size={15}/><span>{project.name}</span><ChevronDown size={13}/></button>
-        <div className="sidebar-section-title"><span>ARTBOARDS</span><span>{project.artboards.length}</span></div>
+        <div className="sidebar-section-title artboards-heading">
+          <span>ARTBOARDS</span>
+          <div className="artboard-heading-actions"><span>{project.artboards.length}</span><button type="button" className={`artboard-select-toggle ${multiSelectArtboards ? 'is-active' : ''}`} aria-pressed={multiSelectArtboards} onClick={() => { setMultiSelectArtboards((value) => !value); setArtboardDeleteSelection([]); }} title={multiSelectArtboards ? 'Exit multi-select' : 'Select multiple artboards'}><ListChecks size={13}/><span>{multiSelectArtboards ? 'Done' : 'Select'}</span></button></div>
+        </div>
+        {multiSelectArtboards && artboardDeleteSelection.length > 0 && <button type="button" className="delete-selected-artboards" onClick={() => deleteArtboards(artboardDeleteSelection)}><Trash2 size={13}/> Delete selected <span>{artboardDeleteSelection.length}</span></button>}
         <div className="artboard-list">
-          {project.artboards.map((board, index) => <button key={board.id} className={`artboard-row ${active?.id === board.id ? 'current' : ''}`} onClick={() => { setActiveId(board.id); setSelectedId(null); setSelectedArtboard(true); }}>
-            <span className={`artboard-thumb ${board.height > board.width ? 'portrait' : ''}`}><span style={{ background: board.objects.find((o) => o.type === 'rect' && !o.locked)?.fill ?? '#d9d9d9' }}/></span>
-            <span className="artboard-info"><strong>{board.name}</strong><small>{board.width} × {board.height}{board.isMaster ? ' · Master' : ''}</small></span><span className="artboard-index">{String(index + 1).padStart(2, '0')}</span>
-          </button>)}
+          {project.artboards.map((board, index) => <div className="artboard-list-item" key={board.id}>
+            {multiSelectArtboards && <input className="artboard-select-checkbox" type="checkbox" checked={artboardDeleteSelection.includes(board.id)} disabled={board.isMaster} aria-label={`Select ${board.name} for deletion${board.isMaster ? ' (protected master)' : ''}`} onChange={() => toggleArtboardDeleteSelection(board.id)}/>}
+            <button type="button" className={`artboard-row ${active?.id === board.id ? 'current' : ''}`} aria-current={active?.id === board.id ? 'page' : undefined} onClick={() => { setActiveId(board.id); setSelectedId(null); setSelectedArtboard(true); }}>
+              <span className={`artboard-thumb ${board.height > board.width ? 'portrait' : ''}`}><span style={{ background: board.objects.find((o) => o.type === 'rect' && !o.locked)?.fill ?? '#d9d9d9' }}/></span>
+              <span className="artboard-info"><strong>{board.name}</strong><small>{board.width} × {board.height}{board.isMaster ? ' · Master' : ''}</small></span><span className="artboard-index">{String(index + 1).padStart(2, '0')}</span>
+            </button>
+            {active?.id === board.id && !multiSelectArtboards && <button type="button" className="artboard-delete-button" disabled={board.isMaster} title={board.isMaster ? 'The master artboard is protected' : `Delete ${board.name}`} aria-label={board.isMaster ? 'The master artboard is protected' : `Delete ${board.name}`} onClick={() => deleteArtboards([board.id])}><Trash2 size={14}/></button>}
+          </div>)}
         </div>
         <div className="sidebar-tools"><div className="sidebar-section-title"><span>IMPORT</span></div>
           <button className="tool-row" onClick={pasteButton}><ClipboardPaste size={15}/><span>Paste from Figma</span><kbd>⌘ V</kbd></button>
@@ -588,9 +638,9 @@ export default function App() {
             <button className={`toolbar-button ${showSafe ? 'selected-tool' : ''}`} title="Toggle safe area" onClick={() => setShowSafe((value) => !value)}><Crop size={15}/></button>
           </div>
           <div className="canvas-meta"><span>{active?.category ?? 'Artboard'}</span><span className="meta-slash">/</span><strong>{active?.name}</strong></div>
-          <div className="zoom-controls"><button className="toolbar-button" title="Zoom out" onClick={() => setZoom((value) => Math.max(.12, value - .05))}><ZoomOut size={15}/></button><button className="zoom-value" onClick={() => setZoom(.39)}>{Math.round(zoom * 100)}%</button><button className="toolbar-button" title="Zoom in" onClick={() => setZoom((value) => Math.min(1.2, value + .05))}><ZoomIn size={15}/></button></div>
+          <div className="zoom-controls"><button className="toolbar-button" title="Zoom out" onClick={() => setZoom((value) => Math.max(.12, value - .05))}><ZoomOut size={15}/></button><button className="zoom-value" title="Reset zoom to 39%" onClick={() => setZoom(.39)}>{Math.round(zoom * 100)}%</button><button className="toolbar-button" title="Zoom in" onClick={() => setZoom((value) => Math.min(2, value + .05))}><ZoomIn size={15}/></button></div>
         </div>
-        <div className="canvas-stage">
+        <div className="canvas-stage" ref={canvasStageRef}>
           {active ? <div className="canvas-wrap" style={{ width: active.width * zoom, height: active.height * zoom }}>
             <div className="canvas-shadow"><EditorCanvas artboard={active} zoom={zoom} selectedId={selectedId} onSelect={onSelectCanvas} onModify={onModify} onCanvas={updateCanvas} showSafeArea={showSafe}/></div>
           </div> : <div className="empty-workspace"><div className="upload-emblem"><Upload size={24}/></div><h2>Bring a design into the studio</h2><p>Paste from Figma or upload PDF, SVG, PNG, or JPEG.</p><button className="dark-button" onClick={() => fileRef.current?.click()}><Upload size={15}/> Choose a file</button><button className="text-button" onClick={pasteButton}><ClipboardPaste size={14}/> Paste from Figma</button></div>}
