@@ -11,7 +11,10 @@ export async function exportArtboard(artboard: Artboard, format: string): Promis
     const page = pdf.addPage([artboard.width, artboard.height]);
     const image = await pdf.embedPng(await png.arrayBuffer());
     page.drawImage(image, { x: 0, y: 0, width: artboard.width, height: artboard.height });
-    return download(new Blob([await pdf.save()], { type: 'application/pdf' }), `${slug(artboard.name)}.pdf`);
+    const pdfBytes = await pdf.save();
+    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+    new Uint8Array(pdfBuffer).set(pdfBytes);
+    return download(new Blob([pdfBuffer], { type: 'application/pdf' }), `${slug(artboard.name)}.pdf`);
   }
   return download(png, `${slug(artboard.name)}.${format === 'jpeg' ? 'jpg' : format}`);
 }

@@ -1,24 +1,25 @@
 # Duocreator — Product Requirements Document
 
 **Status:** Product draft  
-**Version:** 1.1  
+**Version:** 1.2  
 **Date:** 1 November 2026
 
 ## Product name and one-line description
 
-**Duocreator** is a browser-based design resizing studio that turns one source design into multiple independently editable layouts for social, marketing, web, newsletter, video, and print formats.
+**Duocreator** is an AI-assisted browser design studio that reflows one editable source design into independent layouts for the formats a designer needs.
 
 ## Problem statement
 
 Graphic designers and freelancers repeatedly adapt the same campaign design to many publishing dimensions. Manual duplication and rebuilding takes time, and flattened exports prevent separate editing of text, images, and shapes in each output size.
 
-Duocreator should speed up the first pass of resizing while preserving the source master and giving designers full control over final layout decisions. For Figma-origin designs, the existing **Figma to Duocreator** plugin provides a direct handoff that avoids a PDF round trip for supported content.
+Duocreator should use AI to understand the hierarchy and roles of existing design layers, then adapt their placement and scale to each target canvas. It must preserve the imported copy and visual assets, keep the resulting layers editable, and leave final decisions with the designer. For Figma-origin designs, the existing **Figma to Duocreator** plugin provides a direct handoff that avoids a PDF round trip for supported content.
 
 ## Product vision and principles
 
 - **Editable by default:** Keep supported text, images, shapes, lines, and groups as separate objects.
 - **Independent variants:** Changes to one size never alter the master or sibling variants.
 - **Designer in control:** Automated placement is a starting point, not a final decision.
+- **Preserve existing content:** AI may reposition, resize, and reflow imported elements; it must not rewrite copy, replace imagery, or flatten editable layers.
 - **Honest imports:** Identify flattened or unsupported content and retain a visual fallback.
 - **Protected source:** Keep the imported master unchanged unless the user explicitly edits it.
 
@@ -71,7 +72,14 @@ Accept clipboard paste from the existing plugin as the preferred editable Figma 
 
 ### 2. Standard size catalog and custom artboards
 
-Provide searchable presets for major social platforms, marketing placements, newsletters, blog covers, YouTube thumbnails, photo footers, and common print dimensions. Presets include width, height, unit, orientation, and optional safe-area guidance. Support custom dimensions.
+Provide searchable presets for the v1 launch formats below. Presets include width, height, unit, orientation, and optional safe-area guidance. Support custom dimensions.
+
+| Preset | Dimensions |
+|---|---:|
+| Instagram post | 1080 × 1350 px |
+| Instagram story | 1080 × 1920 px |
+| Blog thumbnail | 1200 × 630 px |
+| Newsletter thumbnail | 1200 × 675 px |
 
 **User stories**
 
@@ -81,14 +89,16 @@ Provide searchable presets for major social platforms, marketing placements, new
 
 ### 3. Generate independent editable variants
 
-Create one or more copies from the master with scaling, alignment, safe-area rules, and element-aware placement suggestions. Variants have independent document states. Support selecting, moving, resizing, cropping, reordering, grouping, locking, hiding, and deleting supported objects. Flag overflow and likely collisions.
+Use an AI layout service to analyze the imported layer tree, existing text and typography, visual hierarchy, and target dimensions. Generate an element-by-element layout plan that adapts the existing content to the new aspect ratio. Preserve the original text, images, shapes, and supported effects as editable objects; do not alter the master. Create independent variants, show warnings when content cannot be placed confidently, and allow designers to refine every result. If AI is unavailable, retain a clearly identified geometric-fit fallback.
 
 **User stories**
 
-- As a designer, I want to generate multiple sizes from the master in one action.
+- As a designer, I want AI to adapt the composition of my imported design to each selected size instead of only scaling the whole canvas.
+- As a designer, I want every existing text, picture, line, and shape preserved and editable in each generated size.
+- As a designer, I want AI-generated layout drafts for Instagram post (1080 × 1350), Instagram story (1080 × 1920), blog thumbnail (1200 × 630), and newsletter thumbnail (1200 × 675).
 - As a designer, I want to edit one variant without changing the source or other sizes.
 - As a designer, I want to refine supported text, images, lines, shapes, and groups independently.
-- As a designer, I want warnings for clipping and collisions before export.
+- As a designer, I want warnings for clipping, collisions, and layout decisions the AI could not make confidently.
 - As a designer, I want to compare a variant with its master.
 
 ### 4. Canvas editor and project management
@@ -120,7 +130,7 @@ Export an artboard or batch as PDF, JPEG, PNG, SVG, WebP, or Duocreator JSON. Pr
 - Editing the original Figma file or syncing changes back to Figma; plugin import is one-way in v1.
 - Parsing proprietary `.canva` files directly or bypassing Canva permissions.
 - Multiplayer editing, comments, approval workflows, client portals, brand kits, enterprise SSO, or asset marketplaces.
-- AI-generated copy/images or fully autonomous design decisions.
+- AI-generated copy or replacement imagery, automatic publishing, or design changes that bypass designer review.
 - Video or animation authoring. Slides support imports selected slide frames as static design content.
 - Native desktop/mobile apps; the web editor is desktop-focused.
 - Guaranteed support for every font, effect, blend mode, mask, variable, component behavior, color profile, or complex PDF feature.
@@ -146,8 +156,9 @@ Export an artboard or batch as PDF, JPEG, PNG, SVG, WebP, or Duocreator JSON. Pr
 
 ### Backend and storage
 
-- **Node.js + TypeScript API** (Fastify or NestJS) for authentication, projects, document versions, Canva OAuth/API integration, export jobs, and signed URLs.
-- **PostgreSQL** for users, projects, artboard metadata, versions, and job status; store versioned design data as JSONB with indexed metadata.
+- **Supabase Auth + PostgreSQL** for user accounts, projects, and versioned design JSONB, protected with row-level security.
+- **Supabase Edge Functions or a Node.js + TypeScript API** for AI layout planning, Canva OAuth/API integration, export jobs, and signed URLs. Keep all model credentials on the server.
+- Use a structured-output-capable model behind a provider adapter. Send only the supported layer tree, asset references/visual preview, and target dimensions; require an output plan keyed to stable source layer IDs. Never send API keys to the browser.
 - **S3-compatible storage** for source files, assets, previews, and exports.
 - **Redis + a job queue** for large imports, thumbnails, and batch exports. Keep routine editing client-side and save incrementally.
 
@@ -173,6 +184,7 @@ The Figma plugin provides a structured source tree and embedded assets, improvin
 - Each variant is a deep copy with independent object IDs, edit state, and history.
 - Store stable IDs, types, geometry, transforms, styles, z-order, and source metadata in Duocreator’s own schema. Retain the raw plugin payload and source node IDs for traceability.
 - Record the source master version for every variant. Master edits never silently overwrite variants.
+- AI layout responses contain geometry and supported layout properties only. They reference source layer IDs and preserve original text, asset data, and editability.
 - Preserve text characters/font metadata even when displaying outlined SVG fallback. Enable text editing only after an available typeface is selected.
 - Represent unsupported imported content as an identified locked visual fallback with editable overlays.
 
@@ -206,13 +218,14 @@ Establish baselines during private beta. Initial targets:
 5. Missing-font text preserves source characters and metadata, displays the outlined SVG fallback, and remains non-editable until a replacement typeface is chosen.
 6. Flat mode creates a PNG-based master without claiming its contents are editable.
 7. PDF and standard image/vector imports work with clear fallbacks for unsupported content.
-8. The size catalog includes launch-approved presets across stated categories and supports custom dimensions.
-9. Variants are independently editable without changing the master or siblings.
-10. The editor supports selection, movement, resize, crop, supported text editing, layer order, grouping, undo/redo, and autosave.
-11. Users can export individual or batch artboards as PDF, JPEG, PNG, SVG, WebP, and Duocreator JSON.
-12. Canva is available through an authorized approved flow or clearly marked unavailable for v1.
-13. Import limits, unsupported-content behavior, browser support, privacy, and deletion behavior are documented.
-14. No critical security, data-loss, or export-corruption issue remains; monitoring covers import/export failures and latency.
+8. The size catalog includes the four approved v1 formats at their specified dimensions and supports custom dimensions.
+9. AI produces an element-level re-layout for each approved format, preserving existing content and editability; each result is independently editable without changing the master or siblings.
+10. When the AI service is unavailable or uncertain, the app reports that state and offers its geometric-fit fallback without claiming that fallback is an AI-generated layout.
+11. The editor supports selection, movement, resize, crop, supported text editing, layer order, grouping, undo/redo, and autosave.
+12. Users can export individual or batch artboards as PDF, JPEG, PNG, SVG, WebP, and Duocreator JSON.
+13. Canva is available through an authorized approved flow or clearly marked unavailable for v1.
+14. Import limits, unsupported-content behavior, browser support, privacy, and deletion behavior are documented.
+15. No critical security, data-loss, or export-corruption issue remains; monitoring covers AI, import, and export failures and latency.
 
 ## Risks and mitigations
 
@@ -229,7 +242,8 @@ Establish baselines during private beta. Initial targets:
 
 ## Open product decisions
 
-- Which preset sizes are needed at launch, and who maintains the catalog?
+- Which AI model provider and server deployment path should power layout planning?
+- What visual preview, layer-tree, or asset context gives the AI enough information without sending unnecessary project data?
 - What clipboard payload and image size limits fit the beta?
 - Should larger Figma designs use authenticated direct upload in a later release?
 - Which Figma node types/effects must remain editable in v1, and which can use visual fallbacks?

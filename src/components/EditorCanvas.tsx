@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { Canvas, FabricImage, Ellipse, Line, Rect, Textbox } from 'fabric';
+import type { FabricObject } from 'fabric';
 import type { Artboard, DesignObject } from '../types';
+
+type DesignFabricObject = FabricObject & { data?: { designId?: string } };
+const designIdOf = (object?: FabricObject | null) => (object as DesignFabricObject | null | undefined)?.data?.designId;
 
 interface Props {
   artboard: Artboard;
@@ -23,12 +27,12 @@ export function EditorCanvas({ artboard, zoom, onSelect, onModify, onCanvas, sho
     const canvas = new Canvas(element.current, { selection: true, preserveObjectStacking: true, backgroundColor: '#fff' });
     fabric.current = canvas;
     onCanvas(canvas);
-    canvas.on('selection:created', (event) => onSelect(String(event.selected?.[0]?.data?.designId ?? '')));
-    canvas.on('selection:updated', (event) => onSelect(String(event.selected?.[0]?.data?.designId ?? '')));
+    canvas.on('selection:created', (event) => onSelect(String(designIdOf(event.selected?.[0]) ?? '')));
+    canvas.on('selection:updated', (event) => onSelect(String(designIdOf(event.selected?.[0]) ?? '')));
     canvas.on('selection:cleared', () => { if (!rebuilding.current) onSelect(null); });
     canvas.on('object:modified', (event) => {
       const object = event.target;
-      const id = String(object?.data?.designId ?? '');
+      const id = String(designIdOf(object) ?? '');
       if (id) onModify(id, { x: object.left ?? 0, y: object.top ?? 0, width: (object.width ?? 0) * (object.scaleX ?? 1), height: (object.height ?? 0) * (object.scaleY ?? 1), opacity: object.opacity ?? 1 });
     });
     const resizeObserver = new ResizeObserver(() => canvas.requestRenderAll());
@@ -41,7 +45,7 @@ export function EditorCanvas({ artboard, zoom, onSelect, onModify, onCanvas, sho
     if (!canvas) return;
     let cancelled = false;
     const render = async () => {
-      const previousId = canvas.getActiveObject()?.data?.designId as string | undefined;
+      const previousId = designIdOf(canvas.getActiveObject());
       rebuilding.current = true;
       canvas.clear();
       canvas.backgroundColor = '#ffffff';
@@ -50,7 +54,7 @@ export function EditorCanvas({ artboard, zoom, onSelect, onModify, onCanvas, sho
         const fabricObject = await toFabricObject(object);
         if (cancelled || !fabricObject) continue;
         fabricObject.set({ left: object.x, top: object.y, opacity: object.opacity ?? 1, selectable: !object.locked, evented: !object.locked });
-        fabricObject.data = { designId: object.id };
+        fabricObject.set('data', { designId: object.id });
         canvas.add(fabricObject);
       }
       if (showSafeArea) {
@@ -59,7 +63,7 @@ export function EditorCanvas({ artboard, zoom, onSelect, onModify, onCanvas, sho
       }
       canvas.setDimensions({ width: artboard.width, height: artboard.height });
       canvas.setZoom(zoom);
-      const restore = canvas.getObjects().find((item) => item.data?.designId === previousId);
+      const restore = canvas.getObjects().find((item) => designIdOf(item) === previousId);
       if (restore) canvas.setActiveObject(restore);
       canvas.requestRenderAll();
       rebuilding.current = false;
